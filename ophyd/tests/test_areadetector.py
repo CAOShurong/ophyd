@@ -53,6 +53,7 @@ from ophyd.areadetector.util import stub_templates
 from ophyd.device import Component as Cpt
 from ophyd.signal import Signal
 from ophyd.sim import make_fake_device
+from ophyd.status import Status
 from ophyd.utils.paths import make_dir_tree
 
 logger = logging.getLogger(__name__)
@@ -275,6 +276,52 @@ def test_hdf5_plugin(ad_prefix, cleanup):
     print(d.p.read_configuration())
     d.p.describe_configuration()
     d.unstage()
+
+
+def test_hdf5_plugin_warmup_signals_are_configurable():
+    class ConfigurableHDF5Plugin(HDF5Plugin):
+        @property
+        def warmup_signals(self):
+            signals = super().warmup_signals
+            signals.pop(self.parent.cam.image_mode)
+            signals.pop(self.parent.cam.acquire_period)
+            return signals
+
+    class MyDetector(SimDetector):
+        hdf5 = Cpt(ConfigurableHDF5Plugin, "HDF1:")
+
+    FakeDetector = make_fake_device(MyDetector)
+    det = FakeDetector("", name="det")
+
+    expected_signals = [
+        (det.cam.array_callbacks, 1),
+        (det.cam.trigger_mode, "Internal"),
+        (det.cam.acquire_time, 1),
+        (det.cam.acquire, 1),
+    ]
+    assert list(det.hdf5.warmup_signals.items()) == expected_signals
+
+    disabled_signals = (det.cam.image_mode, det.cam.acquire_period)
+    for signal in disabled_signals:
+        signal.set = Mock(side_effect=AssertionError("disabled PV was written"))
+
+    def immediate_set(signal):
+        def set_and_finish(value):
+            signal.sim_put(value)
+            status = Status()
+            status.set_finished()
+            return status
+
+        return Mock(side_effect=set_and_finish)
+
+    for signal in [det.hdf5.enable, *det.hdf5.warmup_signals]:
+        signal.set = immediate_set(signal)
+
+    with patch("ophyd.areadetector.plugins.ttime.sleep"):
+        det.hdf5.warmup()
+
+    for signal in disabled_signals:
+        signal.set.assert_not_called()
 
 
 @pytest.mark.adsim
