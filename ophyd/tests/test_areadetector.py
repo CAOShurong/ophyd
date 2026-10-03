@@ -296,8 +296,6 @@ def test_hdf5_plugin_warmup_signals_are_configurable():
     expected_signals = [
         (det.cam.array_callbacks, 1),
         (det.cam.trigger_mode, "Internal"),
-        (det.cam.acquire_time, 1),
-        (det.cam.acquire, 1),
     ]
     assert list(det.hdf5.warmup_signals.items()) == expected_signals
 
@@ -305,8 +303,16 @@ def test_hdf5_plugin_warmup_signals_are_configurable():
     for signal in disabled_signals:
         signal.set = Mock(side_effect=AssertionError("disabled PV was written"))
 
+    det.cam.acquire_time.sim_put(7)
+    det.cam.acquire.sim_put(0)
+    acquisition_signals = [(det.cam.acquire_time, 1), (det.cam.acquire, 1)]
+    all_signals = expected_signals + acquisition_signals
+    original_values = [(signal, signal.get()) for signal, _ in all_signals]
+    writes = []
+
     def immediate_set(signal):
         def set_and_finish(value):
+            writes.append((signal, value))
             signal.sim_put(value)
             status = Status()
             status.set_finished()
@@ -314,7 +320,7 @@ def test_hdf5_plugin_warmup_signals_are_configurable():
 
         return Mock(side_effect=set_and_finish)
 
-    for signal in [det.hdf5.enable, *det.hdf5.warmup_signals]:
+    for signal in [det.hdf5.enable, *(signal for signal, _ in all_signals)]:
         signal.set = immediate_set(signal)
 
     with patch("ophyd.areadetector.plugins.ttime.sleep"):
@@ -322,6 +328,10 @@ def test_hdf5_plugin_warmup_signals_are_configurable():
 
     for signal in disabled_signals:
         signal.set.assert_not_called()
+    assert writes == [(det.hdf5.enable, 1), *all_signals, *reversed(original_values)]
+    assert list(det.hdf5.warmup_signals.items()) == expected_signals
+    for signal, value in original_values:
+        assert signal.get() == value
 
 
 @pytest.mark.adsim

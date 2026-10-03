@@ -975,16 +975,17 @@ class HDF5Plugin(FilePlugin, version=(1, 9, 1), version_type="ADCore"):
 
     @property
     def warmup_signals(self):
-        """Ordered mapping of signals to values used while warming up."""
+        """Ordered camera configuration used before the warmup acquisition.
+
+        Subclasses may omit unsupported signals. The acquisition time and
+        acquisition itself are handled by :meth:`warmup`.
+        """
         return OrderedDict(
             [
                 (self.parent.cam.array_callbacks, 1),
                 (self.parent.cam.image_mode, "Single"),
                 (self.parent.cam.trigger_mode, "Internal"),
-                # just in case the acquisition time is set very long...
-                (self.parent.cam.acquire_time, 1),
                 (self.parent.cam.acquire_period, 1),
-                (self.parent.cam.acquire, 1),
             ]
         )
 
@@ -996,7 +997,10 @@ class HDF5Plugin(FilePlugin, version=(1, 9, 1), version_type="ADCore"):
         This sets the array size, etc.
         """
         self.enable.set(1).wait()
-        sigs = self.warmup_signals
+        sigs = OrderedDict(self.warmup_signals)
+        # These common steps are required even with custom camera configuration.
+        sigs[self.parent.cam.acquire_time] = 1
+        sigs[self.parent.cam.acquire] = 1
 
         original_vals = {sig: sig.get() for sig in sigs}
 
